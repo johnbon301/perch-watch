@@ -3,7 +3,7 @@ import cv2
 from ultralytics import YOLO
 
 # my fine-tunned model goes here
-model = YOLO('../models/bird_detection(best_weight).pt')
+model = YOLO('./models/bird_detection(best_weight).pt')
 
 # fps stuff
 pTime = 0
