@@ -2,8 +2,8 @@ import time
 import cv2
 from ultralytics import YOLO
 
-# my fine-tunned model goes here
-model = YOLO('./models/bird_detection(best_weight).pt')
+# fine-tunned model goes here (nano is used temp. for testing)
+model = YOLO('yolo11n.pt')
 
 # fps stuff
 pTime = 0
@@ -11,7 +11,12 @@ cTime = 0
 
 # setting up camera
 cap = cv2.VideoCapture(0)  # creates a capture object that opens up the default camera (0)
-cap.set(3, 640) # sets the height and width of the window size
+
+if not cap.isOpened():
+    raise RuntimeError("Camera failed to open")
+
+
+cap.set(3, 640) # sets the width and height of the window size
 cap.set(4, 480)
 
 while True:  # infinite loop
@@ -20,7 +25,13 @@ while True:  # infinite loop
         break
 
     # load and detect
-    results = model(frame, conf=0.5, verbose=False)
+    results = model(frame, conf=0.5)
+
+    # extracts the points and converts them to the middle of the box
+    for box in results.boxes[0]:
+        x1, y1, x2, y2 = box.xyxy
+        xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
+
     # labels the frame taken from live feed
     annotatedFrame = results[0].plot()
 
