@@ -14,7 +14,7 @@ from time import sleep
 #         kit.servo[1].angle = self.angle # MAX ANGLE(up and down) 80 - 180
 
 
-
+# don't forget to change and add a class for pump check and preasure
 kit = ServoKit(channels=16)
 trigger = DigitalOutputDevice(17)  # GPIO pin
 
