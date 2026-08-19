@@ -16,7 +16,7 @@ from time import sleep
 
 
 kit = ServoKit(channels=16)
-trigger = DigitalOutputDevice(17)  # your GPIO pin
+trigger = DigitalOutputDevice(17)  # GPIO pin
 
 # Servo check
 kit.servo[0].angle = 90
