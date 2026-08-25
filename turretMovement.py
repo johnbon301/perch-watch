@@ -2,28 +2,29 @@ from adafruit_servokit import ServoKit
 from gpiozero import DigitalOutputDevice
 from time import sleep
 
+class Turret:
+    def __init__(self, panAngle, tiltAngle):
+        self.panAngle = panAngle
+        self.tiltAngle = tiltAngle
+        self.kit = ServoKit(channels=16)
+        self.trigger = DigitalOutputDevice(17)
+        
 
-# class Turret:
-#     def __init__(self, angle):
-#         self.panAngle = panAngle
-#         self.tiltAngle = tiltAngle
-#         self.kit = ServoKit(channels=16)
+    def moveTurret(self, panAngle, tiltAngle):
+        if panAngle is not None:
+            self.kit.servo[0].angle = panAngle # based on middle box coordinate of ai model
+            self.panAngle = panAngle
+            print(self.panAngle)
+        if tiltAngle is not None:
+            self.kit.servo[1].angle = tiltAngle # MAX ANGLE(up and down) 80 - 180
+            self.tiltAngle = tiltAngle
+            print(self.tiltAngle)
 
-#     def moveTurret(self):
-#         kit.servo[0].angle = self.angle # based on middle box coordinate of ai model
-#         kit.servo[1].angle = self.angle # MAX ANGLE(up and down) 80 - 180
+        return self.panAngle, self.tiltAngle
+      
+    def shoot(self):
+        self.trigger.on()
+        sleep(2)
+        self.trigger.off()
 
 
-# don't forget to change and add a class for pump check and preasure
-kit = ServoKit(channels=16)
-trigger = DigitalOutputDevice(17)  # GPIO pin
-
-# Servo check
-kit.servo[0].angle = 90
-kit.servo[1].angle = 90
-sleep(5)
-
-# Pump check
-trigger.on()
-sleep(1.5)
-trigger.off()
