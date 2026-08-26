@@ -76,12 +76,24 @@ def main():
             biggestBox = max(xyxy_list, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
             x1, y1, x2, y2 = biggestBox
             xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
-            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, 
+
+            # crop the detected bird out of the frame and run it through the species model
+            croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
+            if croppedBird.size > 0:
+                speciesResults = speciesOnlyModel(croppedBird, conf=0.5)
+                speciesBoxes = speciesResults[0].boxes
+                if len(speciesBoxes) > 0:
+                    topIdx = int(speciesBoxes.conf.argmax())
+                    speciesClassId = int(speciesBoxes.cls[topIdx])
+                    speciesName = speciesOnlyModel.names[speciesClassId]
+                    speciesConf = float(speciesBoxes.conf[topIdx])
+                    print(f"species: {speciesName} ({speciesConf:.2f})")
+
+            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight,
                                                             initalPanAngle, initalTiltAngle, hfov, vfov)
             currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
-            time.sleep(0.1)
-            print(currentPanAngle)
-            print(currentTiltAngle)
+            time.sleep(0.1) # CHANGE WHEN SERVOS ARE ACTUALLY CONNECTED
+            turret.shoot() # must wait for the position of the servos to move into place
 
         # labels the frame taken from live feed
         annotatedFrame = results[0].plot()
