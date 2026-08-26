@@ -60,7 +60,7 @@ def main():
 
         # load and detect
         # results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
-        results = birdOnlyModel(frame, conf=0.5, classes=[0])
+        results = birdOnlyModel(frame, conf=0.6, classes=[0])
 
         """
         for every result from model, extract every box and its point, calculate mid point, convert those mid points to an angle where 
@@ -79,7 +79,7 @@ def main():
             targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, 
                                                             initalPanAngle, initalTiltAngle, hfov, vfov)
             currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
-            time.sleep(0.30)
+            time.sleep(0.1)
             print(currentPanAngle)
             print(currentTiltAngle)
 
