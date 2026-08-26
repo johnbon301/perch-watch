@@ -1,5 +1,6 @@
 import time
 import cv2
+from datetime import datetime
 from ultralytics import YOLO
 import turretMovement
 
@@ -32,8 +33,8 @@ def main():
     model = YOLO('yolo11n.pt')
 
     # setting up camera
-    cap = cv2.VideoCapture(0)  # creates a capture object that opens up the default camera (0)
-
+    cap = cv2.VideoCapture('./istockphoto-2193039788-640_adpp_is.mp4')  # creates a capture object that opens up the default camera (0)
+    
     if not cap.isOpened():
         raise RuntimeError("Camera failed to open")
 
@@ -47,6 +48,9 @@ def main():
     # fps stuff
     pTime = 0
     cTime = 0
+    # timing stuff
+    lastShotTime = 0
+    shootCooldown = 5.0
 
     """ Two models are needed for this script to work. The stage 1 part will only detect for bird and nothing else.
         Need to make sure endangered species are on this part too. The second stage will crop the bounded box for the 
@@ -76,24 +80,29 @@ def main():
             biggestBox = max(xyxy_list, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
             x1, y1, x2, y2 = biggestBox
             xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
+            print("Bird Seen")
 
             # crop the detected bird out of the frame and run it through the species model
             croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
             if croppedBird.size > 0:
-                speciesResults = speciesOnlyModel(croppedBird, conf=0.5)
+                speciesResults = speciesOnlyModel(croppedBird, conf=0.45, save=True)
                 speciesBoxes = speciesResults[0].boxes
                 if len(speciesBoxes) > 0:
-                    topIdx = int(speciesBoxes.conf.argmax())
-                    speciesClassId = int(speciesBoxes.cls[topIdx])
+                    topIdx = int(speciesBoxes.conf.argmax()) # takes highest confidence rate of frame for species
+                    speciesClassId = int(speciesBoxes.cls[topIdx]) 
                     speciesName = speciesOnlyModel.names[speciesClassId]
                     speciesConf = float(speciesBoxes.conf[topIdx])
+                    now = datetime.now()
+                    print(now.strftime("%Y-%m-%d %H:%M:%S"))
                     print(f"species: {speciesName} ({speciesConf:.2f})")
 
             targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight,
                                                             initalPanAngle, initalTiltAngle, hfov, vfov)
             currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
-            time.sleep(0.1) # CHANGE WHEN SERVOS ARE ACTUALLY CONNECTED
-            turret.shoot() # must wait for the position of the servos to move into place
+            #time.sleep(0.1) # CHANGE WHEN SERVOS ARE ACTUALLY CONNECTED
+            #if time.time() - lastShotTime >= SHOOT_COOLDOWN: # add conditions for protected species
+                #turret.shoot() # must wait for the position of the servos to move into place
+                #lastShotTime = time.time()
 
         # labels the frame taken from live feed
         annotatedFrame = results[0].plot()
