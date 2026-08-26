@@ -4,16 +4,16 @@ from ultralytics import YOLO
 import turretMovement
 
 
-def calculatePanTilt(xm, ym, frameWidth, frameHeight, currentPanAngle, currentTiltAngle):
+def calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTiltAngle, hfov, vfov):
     # pan
     offsetRatioX = (xm - frameWidth / 2) / (frameWidth / 2) # based on a number between -1 and 1
-    panOffset = offsetRatioX * (HFOV / 2)
-    targetPan = max(0, min(180, currentPanAngle + panOffset))
+    panOffset = offsetRatioX * (hfov / 2)
+    targetPan = max(0, min(180, initalPanAngle + panOffset))
 
     # tilt
     offsetRatioY = (ym - frameHeight / 2) / (frameHeight / 2)
-    tiltOffset = offsetRatioY * (VFOV / 2)
-    targetTilt = max(80, min(180, currentTiltAngle + tiltOffset))  # confirm real tilt limits
+    tiltOffset = offsetRatioY * (vfov / 2)
+    targetTilt = max(80, min(180, initalTiltAngle + tiltOffset))  # confirm real tilt limits
 
     return targetPan, targetTilt
 
@@ -22,18 +22,14 @@ def main():
     SPECIES_CLASS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # the birds that are being logged
     # FOV for the camera in a 640x480 resolution. Calculated by taking distance, width and height
     # 2 * math.degrees(math.atan(W or H / (2 * D)))
-    HFOV = 41.4
-    VFOV = 31.0
+    hfov = 41.4
+    vfov = 31.0
 
     """ Add explaniation to README to obtain model for script """
     # fine-tunned models goes here
     speciesOnlyModel = YOLO('./models/speciesOnly/birdDetectionUmatilla_ncnn_model')
     birdOnlyModel = YOLO('./models/birdOnly/bird_detection(best_weight)v2_ncnn_model')
     model = YOLO('yolo11n.pt')
-
-    # fps stuff
-    pTime = 0
-    cTime = 0
 
     # setting up camera
     cap = cv2.VideoCapture(0)  # creates a capture object that opens up the default camera (0)
@@ -46,7 +42,11 @@ def main():
     cap.set(4, 480)
     frameWidth = cap.get(3)
     frameHeight = cap.get(4)
-    currentPanAngle, currentTiltAngle = moveTurret(90, 90)
+    turret = turretMovement.Turret(panAngle=90, tiltAngle=90)
+    initalPanAngle, initalTiltAngle = turret.moveTurret(90, 90) # NEED TO FIND TRUE HOME POSITION
+    # fps stuff
+    pTime = 0
+    cTime = 0
 
     """ Two models are needed for this script to work. The stage 1 part will only detect for bird and nothing else.
         Need to make sure endangered species are on this part too. The second stage will crop the bounded box for the 
@@ -55,11 +55,12 @@ def main():
     while True:  # infinite loop
         success, frame = cap.read()  # returns to values that successfully captures the frame (always have)
         if not success:
-            break
+            raise RuntimeError("Frame read did not work")
+        
 
         # load and detect
-        results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
-        # results = birdOnlyModel(frame, conf=0.5, classes=[0]) 
+        # results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
+        results = birdOnlyModel(frame, conf=0.5, classes=[0])
 
         """
         for every result from model, extract every box and its point, calculate mid point, convert those mid points to an angle where 
@@ -69,15 +70,18 @@ def main():
         """
 
         # extracts the points and converts them to the middle of the box
-        i = 0
-        for box in results.boxes[0]:
-            x1, y1, x2, y2 = box[i].xyxy
+        if len(results[0].boxes) > 0:
+            # need to convert to list since YOLO returns PyTorch Tensors
+            xyxy_list = results[0].boxes.xyxy.tolist()
+            biggestBox = max(xyxy_list, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+            x1, y1, x2, y2 = biggestBox
             xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
-            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, currentPanAngle, currentTiltAngle)
-            currentPanAngle, currentTiltAngle = moveTurret(targetPan, targetTilt)
-            i++
-
-            
+            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, 
+                                                            initalPanAngle, initalTiltAngle, hfov, vfov)
+            currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
+            time.sleep(0.30)
+            print(currentPanAngle)
+            print(currentTiltAngle)
 
         # labels the frame taken from live feed
         annotatedFrame = results[0].plot()
@@ -98,3 +102,6 @@ def main():
     # clean up properly outside the loop
     cap.release()
     cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()

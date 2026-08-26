@@ -14,11 +14,9 @@ class Turret:
         if panAngle is not None:
             self.kit.servo[0].angle = panAngle # based on middle box coordinate of ai model
             self.panAngle = panAngle
-            print(self.panAngle)
         if tiltAngle is not None:
             self.kit.servo[1].angle = tiltAngle # MAX ANGLE(up and down) 80 - 180
             self.tiltAngle = tiltAngle
-            print(self.tiltAngle)
 
         return self.panAngle, self.tiltAngle
       
