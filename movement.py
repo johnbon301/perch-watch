@@ -19,12 +19,14 @@ def calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTilt
     return targetPan, targetTilt
 
 def main():
-    # GLOBAL VARIABLES
-    SPECIES_CLASS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # the birds that are being logged
+    PROTECTED_SPECIES = {"Haliaeetus-Leucocephalus", "Buteo-Jamaicensis"}  # bald eagle, red-tailed hawk
+
     # FOV for the camera in a 640x480 resolution. Calculated by taking distance, width and height
     # 2 * math.degrees(math.atan(W or H / (2 * D)))
     hfov = 41.4
     vfov = 31.0
+    smoothingFactor = 0.4  # tune: closer to 1 = faster/more jittery, closer to 0 = smoother/laggier
+    deadbandDegrees = 1.5  # ignore corrections smaller than this to avoid micro-jitter
 
     """ Add explaniation to README to obtain model for script """
     # fine-tunned models goes here
@@ -33,7 +35,7 @@ def main():
     model = YOLO('yolo11n.pt')
 
     # setting up camera
-    cap = cv2.VideoCapture('./istockphoto-2193039788-640_adpp_is.mp4')  # creates a capture object that opens up the default camera (0)
+    cap = cv2.VideoCapture(0)  # creates a capture object that opens up the default camera (0)
     
     if not cap.isOpened():
         raise RuntimeError("Camera failed to open")
@@ -43,8 +45,10 @@ def main():
     cap.set(4, 480)
     frameWidth = cap.get(3)
     frameHeight = cap.get(4)
-    turret = turretMovement.Turret(panAngle=90, tiltAngle=90)
-    initalPanAngle, initalTiltAngle = turret.moveTurret(90, 90) # NEED TO FIND TRUE HOME POSITION
+    turret = turretMovement.Turret(panAngle=90, tiltAngle=140)
+    initalPanAngle, initalTiltAngle = turret.moveTurret(90, 140) # NEED TO FIND TRUE HOME POSITION
+    prevPanAngle, prevTiltAngle = initalPanAngle, initalTiltAngle
+    currentPanAngle, currentTiltAngle = initalPanAngle, initalTiltAngle
     # fps stuff
     pTime = 0
     cTime = 0
@@ -63,8 +67,8 @@ def main():
         
 
         # load and detect
-        # results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
-        results = birdOnlyModel(frame, conf=0.6, classes=[0])
+        results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
+        # results = birdOnlyModel(frame, conf=0.6, classes=[0])
 
         """
         for every result from model, extract every box and its point, calculate mid point, convert those mid points to an angle where 
@@ -83,9 +87,10 @@ def main():
             print("Bird Seen")
 
             # crop the detected bird out of the frame and run it through the species model
+            speciesName = None
             croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
             if croppedBird.size > 0:
-                speciesResults = speciesOnlyModel(croppedBird, conf=0.45, save=True)
+                speciesResults = speciesOnlyModel(croppedBird, conf=0.45)
                 speciesBoxes = speciesResults[0].boxes
                 if len(speciesBoxes) > 0:
                     topIdx = int(speciesBoxes.conf.argmax()) # takes highest confidence rate of frame for species
@@ -98,11 +103,23 @@ def main():
 
             targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight,
                                                             initalPanAngle, initalTiltAngle, hfov, vfov)
-            currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
-            #time.sleep(0.1) # CHANGE WHEN SERVOS ARE ACTUALLY CONNECTED
-            #if time.time() - lastShotTime >= SHOOT_COOLDOWN: # add conditions for protected species
-                #turret.shoot() # must wait for the position of the servos to move into place
-                #lastShotTime = time.time()
+
+            # smooth the target to reduce jitter from small frame-to-frame detection noise
+            targetPan = prevPanAngle + smoothingFactor * (targetPan - prevPanAngle)
+            targetTilt = prevTiltAngle + smoothingFactor * (targetTilt - prevTiltAngle)
+            prevPanAngle, prevTiltAngle = targetPan, targetTilt
+
+            # skip corrections too small to matter, avoids chasing the servo's own mechanical slop
+            if abs(targetPan - currentPanAngle) > deadbandDegrees or abs(targetTilt - currentTiltAngle) > deadbandDegrees:
+                currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
+            time.sleep(0.1)
+
+            if speciesName in PROTECTED_SPECIES:
+                print(f"protected species detected: ({speciesName})")
+            elif time.time() - lastShotTime >= shootCooldown:
+                # turret.shoot() # must wait for the position of the servos to move into place
+                print("BAMMM, TARGET HIT")
+                lastShotTime = time.time()
 
         # labels the frame taken from live feed
         annotatedFrame = results[0].plot()
