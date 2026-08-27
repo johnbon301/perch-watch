@@ -18,6 +18,51 @@ def calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTilt
 
     return targetPan, targetTilt
 
+def birdCheck(results):
+    # extracts the points and converts them to the middle of the box
+    if len(results[0].boxes) > 0:
+        # need to convert to list since YOLO returns PyTorch Tensors
+        xyxy_list = results[0].boxes.xyxy.tolist()
+        biggestBox = max(xyxy_list, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+        x1, y1, x2, y2 = biggestBox
+        xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
+
+        return x1, y1, x2, y2, xm, ym
+
+def speciesCheck(frame, speciesOnlyModel, x1, y1, x2, y2):
+    # crop the detected bird out of the frame and run it through the species model
+    speciesName = None
+    croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
+    if croppedBird.size > 0:
+        speciesResults = speciesOnlyModel(croppedBird, conf=0.45)
+        speciesBoxes = speciesResults[0].boxes
+        if len(speciesBoxes) > 0:
+            topIdx = int(speciesBoxes.conf.argmax()) # takes highest confidence rate of frame for species
+            speciesClassId = int(speciesBoxes.cls[topIdx])
+            speciesName = speciesOnlyModel.names[speciesClassId]
+            speciesConf = float(speciesBoxes.conf[topIdx])
+            now = datetime.now()
+            print(now.strftime("%Y-%m-%d %H:%M:%S"))
+            print(f"species: {speciesName} ({speciesConf:.2f})")
+    return speciesName
+
+def speciesLogging():
+    # TODO: holds a csv file that contains species name, time and date, each photo corrsponding with an ID # to find in csv file (ex 1.png, 2.png, 3.png, etc.)
+    pass
+
+def turretAdjustment(targetPan, targetTilt, smoothingFactor, deadbandDegrees, turret,
+                      prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle):
+    # smooth the target to reduce jitter from small frame-to-frame detection noise
+    targetPan = prevPanAngle + smoothingFactor * (targetPan - prevPanAngle)
+    targetTilt = prevTiltAngle + smoothingFactor * (targetTilt - prevTiltAngle)
+    prevPanAngle, prevTiltAngle = targetPan, targetTilt
+
+    # skip corrections too small to matter, avoids chasing the servo's own mechanical slop, had claude help with this one
+    if abs(targetPan - currentPanAngle) > deadbandDegrees or abs(targetTilt - currentTiltAngle) > deadbandDegrees:
+        currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
+
+    return prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle
+
 def main():
     PROTECTED_SPECIES = {"Haliaeetus-Leucocephalus", "Buteo-Jamaicensis"}  # bald eagle, red-tailed hawk
 
@@ -25,7 +70,7 @@ def main():
     # 2 * math.degrees(math.atan(W or H / (2 * D)))
     hfov = 41.4
     vfov = 31.0
-    smoothingFactor = 0.4  # tune: closer to 1 = faster/more jittery, closer to 0 = smoother/laggier
+    smoothingFactor = 0.4  # closer to 1 = faster/more jittery, closer to 0 = smoother/laggier
     deadbandDegrees = 1.5  # ignore corrections smaller than this to avoid micro-jitter
 
     """ Add explaniation to README to obtain model for script """
@@ -67,8 +112,8 @@ def main():
         
 
         # load and detect
-        results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
-        # results = birdOnlyModel(frame, conf=0.6, classes=[0])
+        # results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
+        results = birdOnlyModel(frame, conf=0.6, classes=[0])
 
         """
         for every result from model, extract every box and its point, calculate mid point, convert those mid points to an angle where 
@@ -76,44 +121,21 @@ def main():
         or so, there is a sleep timer to prevent continous firing. Control preassure to ensure it does not harm bird either. Probably 
         a sleep timer where after the first second. Make sure if a bird is endanger to avoid completely
         """
+        detection = birdCheck(results)
 
-        # extracts the points and converts them to the middle of the box
-        if len(results[0].boxes) > 0:
-            # need to convert to list since YOLO returns PyTorch Tensors
-            xyxy_list = results[0].boxes.xyxy.tolist()
-            biggestBox = max(xyxy_list, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
-            x1, y1, x2, y2 = biggestBox
-            xm, ym = (x1 + x2) / 2, (y1 + y2) / 2
+        if detection is not None:
+            x1, y1, x2, y2, xm, ym = detection
             print("Bird Seen")
 
-            # crop the detected bird out of the frame and run it through the species model
-            speciesName = None
-            croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
-            if croppedBird.size > 0:
-                speciesResults = speciesOnlyModel(croppedBird, conf=0.45)
-                speciesBoxes = speciesResults[0].boxes
-                if len(speciesBoxes) > 0:
-                    topIdx = int(speciesBoxes.conf.argmax()) # takes highest confidence rate of frame for species
-                    speciesClassId = int(speciesBoxes.cls[topIdx]) 
-                    speciesName = speciesOnlyModel.names[speciesClassId]
-                    speciesConf = float(speciesBoxes.conf[topIdx])
-                    now = datetime.now()
-                    print(now.strftime("%Y-%m-%d %H:%M:%S"))
-                    print(f"species: {speciesName} ({speciesConf:.2f})")
+            speciesName = speciesCheck(frame, speciesOnlyModel, x1, y1, x2, y2)
 
-            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight,
-                                                            initalPanAngle, initalTiltAngle, hfov, vfov)
+            targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTiltAngle, hfov, vfov)
 
-            # smooth the target to reduce jitter from small frame-to-frame detection noise
-            targetPan = prevPanAngle + smoothingFactor * (targetPan - prevPanAngle)
-            targetTilt = prevTiltAngle + smoothingFactor * (targetTilt - prevTiltAngle)
-            prevPanAngle, prevTiltAngle = targetPan, targetTilt
+            prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle = turretAdjustment(
+                targetPan, targetTilt, smoothingFactor, deadbandDegrees, turret,
+                prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle)
 
-            # skip corrections too small to matter, avoids chasing the servo's own mechanical slop
-            if abs(targetPan - currentPanAngle) > deadbandDegrees or abs(targetTilt - currentTiltAngle) > deadbandDegrees:
-                currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
             time.sleep(0.1)
-
             if speciesName in PROTECTED_SPECIES:
                 print(f"protected species detected: ({speciesName})")
             elif time.time() - lastShotTime >= shootCooldown:
