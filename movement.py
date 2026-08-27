@@ -25,6 +25,8 @@ def main():
     # 2 * math.degrees(math.atan(W or H / (2 * D)))
     hfov = 41.4
     vfov = 31.0
+    smoothingFactor = 0.4  # tune: closer to 1 = faster/more jittery, closer to 0 = smoother/laggier
+    deadbandDegrees = 1.5  # ignore corrections smaller than this to avoid micro-jitter
 
     """ Add explaniation to README to obtain model for script """
     # fine-tunned models goes here
@@ -45,6 +47,8 @@ def main():
     frameHeight = cap.get(4)
     turret = turretMovement.Turret(panAngle=90, tiltAngle=140)
     initalPanAngle, initalTiltAngle = turret.moveTurret(90, 140) # NEED TO FIND TRUE HOME POSITION
+    prevPanAngle, prevTiltAngle = initalPanAngle, initalTiltAngle
+    currentPanAngle, currentTiltAngle = initalPanAngle, initalTiltAngle
     # fps stuff
     pTime = 0
     cTime = 0
@@ -99,7 +103,15 @@ def main():
 
             targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight,
                                                             initalPanAngle, initalTiltAngle, hfov, vfov)
-            currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
+
+            # smooth the target to reduce jitter from small frame-to-frame detection noise
+            targetPan = prevPanAngle + smoothingFactor * (targetPan - prevPanAngle)
+            targetTilt = prevTiltAngle + smoothingFactor * (targetTilt - prevTiltAngle)
+            prevPanAngle, prevTiltAngle = targetPan, targetTilt
+
+            # skip corrections too small to matter, avoids chasing the servo's own mechanical slop
+            if abs(targetPan - currentPanAngle) > deadbandDegrees or abs(targetTilt - currentTiltAngle) > deadbandDegrees:
+                currentPanAngle, currentTiltAngle = turret.moveTurret(targetPan, targetTilt)
             time.sleep(0.1)
 
             if speciesName in PROTECTED_SPECIES:
