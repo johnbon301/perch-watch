@@ -1,16 +1,20 @@
 import time
+import os
+import csv
 import cv2
 from datetime import datetime
 from ultralytics import YOLO
 import turretMovement
 
+LOG_DIR = "./sightings"
+IMAGE_DIR = os.path.join(LOG_DIR, "images")
+CSV_PATH = os.path.join(LOG_DIR, "sightings.csv")
 
 def calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTiltAngle, hfov, vfov):
     # pan
     offsetRatioX = (xm - frameWidth / 2) / (frameWidth / 2) # based on a number between -1 and 1
     panOffset = offsetRatioX * (hfov / 2)
     targetPan = max(0, min(180, initalPanAngle + panOffset))
-
     # tilt
     offsetRatioY = (ym - frameHeight / 2) / (frameHeight / 2)
     tiltOffset = offsetRatioY * (vfov / 2)
@@ -32,23 +36,38 @@ def birdCheck(results):
 def speciesCheck(frame, speciesOnlyModel, x1, y1, x2, y2):
     # crop the detected bird out of the frame and run it through the species model
     speciesName = None
+    speciesConf = None
     croppedBird = frame[int(y1):int(y2), int(x1):int(x2)]
-    if croppedBird.size > 0:
+
+    if croppedBird.size > 0: # makes sure there is a frame to send to the model
         speciesResults = speciesOnlyModel(croppedBird, conf=0.45)
         speciesBoxes = speciesResults[0].boxes
+
         if len(speciesBoxes) > 0:
             topIdx = int(speciesBoxes.conf.argmax()) # takes highest confidence rate of frame for species
             speciesClassId = int(speciesBoxes.cls[topIdx])
             speciesName = speciesOnlyModel.names[speciesClassId]
             speciesConf = float(speciesBoxes.conf[topIdx])
-            now = datetime.now()
-            print(now.strftime("%Y-%m-%d %H:%M:%S"))
-            print(f"species: {speciesName} ({speciesConf:.2f})")
-    return speciesName
 
-def speciesLogging():
-    # TODO: holds a csv file that contains species name, time and date, each photo corrsponding with an ID # to find in csv file (ex 1.png, 2.png, 3.png, etc.)
-    pass
+    return speciesName, speciesConf, croppedBird
+
+def speciesLogging(speciesName, speciesConf, croppedBird, nextSightingId):
+    # holds a csv file that contains species name, time and date, each photo corresponding with an ID #
+    # to find in csv file (ex 1.png, 2.png, 3.png, etc.). had claude help me with this feature
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+
+    imagePath = os.path.join(IMAGE_DIR, f"{nextSightingId}.png")
+    cv2.imwrite(imagePath, croppedBird)
+
+    fileExists = os.path.isfile(CSV_PATH)
+    with open(CSV_PATH, mode="a", newline="") as csvFile:
+        writer = csv.writer(csvFile)
+
+        if not fileExists:
+            writer.writerow(["id", "species", "confidence", "timestamp"])
+        writer.writerow([nextSightingId, speciesName, f"{speciesConf:.2f}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+
+    return nextSightingId + 1
 
 def turretAdjustment(targetPan, targetTilt, smoothingFactor, deadbandDegrees, turret,
                       prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle):
@@ -71,13 +90,13 @@ def main():
     hfov = 41.4
     vfov = 31.0
     smoothingFactor = 0.4  # closer to 1 = faster/more jittery, closer to 0 = smoother/laggier
-    deadbandDegrees = 1.5  # ignore corrections smaller than this to avoid micro-jitter
+    deadbandDegrees = 1.5
 
     """ Add explaniation to README to obtain model for script """
     # fine-tunned models goes here
     speciesOnlyModel = YOLO('./models/speciesOnly/birdDetectionUmatilla_ncnn_model')
     birdOnlyModel = YOLO('./models/birdOnly/bird_detection(best_weight)v2_ncnn_model')
-    model = YOLO('yolo11n.pt')
+    model = YOLO('./yolo11n_ncnn_model')
 
     # setting up camera
     cap = cv2.VideoCapture(0)  # creates a capture object that opens up the default camera (0)
@@ -90,16 +109,30 @@ def main():
     cap.set(4, 480)
     frameWidth = cap.get(3)
     frameHeight = cap.get(4)
-    turret = turretMovement.Turret(panAngle=90, tiltAngle=140)
-    initalPanAngle, initalTiltAngle = turret.moveTurret(90, 140) # NEED TO FIND TRUE HOME POSITION
+
+    turret = turretMovement.Turret(panAngle=90, tiltAngle=140) # turret object
+
+    initalPanAngle, initalTiltAngle = turret.moveTurret(90, 140)
+    # for angle smoothness
     prevPanAngle, prevTiltAngle = initalPanAngle, initalTiltAngle
     currentPanAngle, currentTiltAngle = initalPanAngle, initalTiltAngle
+
     # fps stuff
     pTime = 0
     cTime = 0
+
     # timing stuff
     lastShotTime = 0
     shootCooldown = 5.0
+    lastLogTime = 0
+    logCooldown = 300.0  # keeps the csv from filling up with one sighting repeated every frame
+
+    # figure out where the sighting id count should resume from, so restarts don't overwrite old photos
+    nextSightingId = 1
+    if os.path.isfile(CSV_PATH):
+        with open(CSV_PATH, mode="r", newline="") as csvFile:
+            rowCount = sum(1 for _ in csv.reader(csvFile)) - 1  # minus header row
+            nextSightingId = max(1, rowCount + 1)
 
     """ Two models are needed for this script to work. The stage 1 part will only detect for bird and nothing else.
         Need to make sure endangered species are on this part too. The second stage will crop the bounded box for the 
@@ -111,7 +144,7 @@ def main():
             raise RuntimeError("Frame read did not work")
         
 
-        # load and detect
+        # where detection starts
         # results = model(frame, conf=0.5, classes=[0]) # using yolo nano for temp. and aiming logic
         results = birdOnlyModel(frame, conf=0.6, classes=[0])
 
@@ -123,23 +156,29 @@ def main():
         """
         detection = birdCheck(results)
 
-        if detection is not None:
+        if detection is not None: # make sure there is a bird to prevent unnessarcy detection 
             x1, y1, x2, y2, xm, ym = detection
             print("Bird Seen")
 
-            speciesName = speciesCheck(frame, speciesOnlyModel, x1, y1, x2, y2)
+            speciesName, speciesConf, croppedBird = speciesCheck(frame, speciesOnlyModel, x1, y1, x2, y2)
+
+            if speciesName is not None and time.time() - lastLogTime >= logCooldown: # prevent random bird data in csv
+                nextSightingId = speciesLogging(speciesName, speciesConf, croppedBird, nextSightingId)
+                lastLogTime = time.time()
 
             targetPan, targetTilt = calculatePanTilt(xm, ym, frameWidth, frameHeight, initalPanAngle, initalTiltAngle, hfov, vfov)
-
+            # turret movement
             prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle = turretAdjustment(
                 targetPan, targetTilt, smoothingFactor, deadbandDegrees, turret,
                 prevPanAngle, prevTiltAngle, currentPanAngle, currentTiltAngle)
 
-            time.sleep(0.1)
+            time.sleep(0.1) # gives time for servos to move
+
             if speciesName in PROTECTED_SPECIES:
                 print(f"protected species detected: ({speciesName})")
+                
             elif time.time() - lastShotTime >= shootCooldown:
-                # turret.shoot() # must wait for the position of the servos to move into place
+                turret.shoot()
                 print("BAMMM, TARGET HIT")
                 lastShotTime = time.time()
 
