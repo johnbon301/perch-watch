@@ -117,10 +117,6 @@ def main():
     prevPanAngle, prevTiltAngle = initalPanAngle, initalTiltAngle
     currentPanAngle, currentTiltAngle = initalPanAngle, initalTiltAngle
 
-    # fps stuff
-    pTime = 0
-    cTime = 0
-
     # timing stuff
     lastShotTime = 0
     shootCooldown = 5.0
@@ -182,25 +178,8 @@ def main():
                 print("BAMMM, TARGET HIT")
                 lastShotTime = time.time()
 
-        # labels the frame taken from live feed
-        annotatedFrame = results[0].plot()
-
-        # sets the fps
-        cTime = time.time()
-        fps = 1 / (cTime - pTime)
-        pTime = cTime
-
-        cv2.putText(annotatedFrame, f' fps: {str(int(fps))}', (10, 50), cv2.FONT_HERSHEY_PLAIN, 2,
-                (255, 0, 255), 2) # adds and edits the window for "Image"
-        
-        cv2.imshow("Result", annotatedFrame)
-        # wait 1ms for the next frame, or quit if 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
     # clean up properly outside the loop
     cap.release()
-    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
