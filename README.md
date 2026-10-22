@@ -2,6 +2,9 @@
 
 A species-aware bird deterrent system for a Raspberry Pi. A static webcam feeds two YOLO models into a pan/tilt turret with a water sprayer. Protected species (bald eagle, red-tailed hawk) are automatically excluded from firing, and sightings of any of the trained species are logged with a photo for later review.
 
+## Challenges Faced
+- add challenges that occured (Oct 2026)
+
 ## How it works
 
 1. The camera (fixed in place, not mounted on the turret) captures a frame.
